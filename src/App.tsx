@@ -166,11 +166,15 @@ export default function App() {
     try {
       let solution: MathSolution;
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 12000);
         const res = await fetch("/api/solve-math", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
+          signal: controller.signal,
         });
+          clearTimeout(timeoutId);
 
         if (res.ok) {
           solution = await res.json();
@@ -180,7 +184,7 @@ export default function App() {
           solution = clientSol || generateFallbackSolution(payload.text);
         }
       } catch {
-        // Network or offline fallback (e.g. GitHub Pages)
+        // Network or offline/timeout fallback (e.g. GitHub Pages)
         const clientSol = await solveMathClientSide(payload);
         solution = clientSol || generateFallbackSolution(payload.text);
       }
