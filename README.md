@@ -96,7 +96,7 @@ npm run dev
 ```
 
 ---
-
+<!--
 # 📷 Screenshots
 
 ## Home
@@ -112,6 +112,7 @@ npm run dev
 > Add solution screenshot
 
 ---
+-->
 
 # 🎯 How It Works
 
@@ -165,8 +166,3 @@ Software QA Engineer | Computer Engineer | Front-End Developer
 
 If you found **Mathicsolve AI** useful or interesting, consider giving the repository a ⭐ on GitHub!
 
----
-
-# 📄 License
-
-This project is licensed under the MIT License.
