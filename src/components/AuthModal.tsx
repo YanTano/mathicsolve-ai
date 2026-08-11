@@ -25,6 +25,7 @@ import {
   loginWithGoogle,
   logoutUser,
   sendPasswordReset,
+  formatFirebaseAuthError,
 } from "../lib/firebase";
 
 interface AuthModalProps {
@@ -96,7 +97,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         }, 800);
       }
     } catch (err: any) {
-      setErrorMsg(err?.message || "Authentication failed. Please check your details.");
+      setErrorMsg(formatFirebaseAuthError(err));
     } finally {
       setLoading(false);
     }
@@ -113,7 +114,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         onClose();
       }, 800);
     } catch (err: any) {
-      setErrorMsg(err?.message || "Google Authentication failed.");
+      setErrorMsg(formatFirebaseAuthError(err));
     } finally {
       setLoading(false);
     }
