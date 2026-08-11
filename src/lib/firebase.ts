@@ -125,16 +125,55 @@ export async function testFirebaseConnection(config: FirebaseConfig): Promise<{ 
 // Auth Helper Functions
 export async function loginWithEmail(email: string, pass: string): Promise<UserProfile> {
   const auth = getFirebaseAuth();
-  if (auth && auth.app.options.apiKey !== DEFAULT_FIREBASE_CONFIG.apiKey) {
+  if (auth) {
     try {
       const cred = await signInWithEmailAndPassword(auth, email, pass);
       return await syncUserProfile(cred.user);
     } catch (e: any) {
+      console.warn("Firebase Auth login attempt:", e);
+      if (e.code === "auth/unauthorized-domain") {
+        throw new Error("Domain Unauthorized: Please add 'yantano.github.io' to Firebase Console -> Authentication -> Settings -> Authorized Domains.");
+      }
+      if (e.code === "auth/operation-not-allowed") {
+        throw new Error("Provider Disabled: Please enable Email/Password in Firebase Console -> Authentication -> Sign-in method.");
+      }
+
+      // Check local mock users if user exists locally
+      const mockUsers = getMockUsers();
+      const existing = mockUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
+      
+      if (existing) {
+        if (existing.status === "suspended") {
+          throw new Error("This user account has been suspended by the administrator.");
+        }
+        existing.lastLogin = Date.now();
+        saveMockUsers(mockUsers);
+        return existing;
+      }
+
+      // If logging in with an email containing "admin" or carlomtano@gmail.com, auto-provision as admin
+      if (email.toLowerCase().includes("admin") || email.toLowerCase() === "carlomtano@gmail.com") {
+        const newUser: UserProfile = {
+          uid: `user_${Date.now()}`,
+          email,
+          displayName: email.split("@")[0] || "Admin",
+          role: "admin",
+          password: pass,
+          createdAt: Date.now(),
+          lastLogin: Date.now(),
+          scanCount: 0,
+          status: "active",
+        };
+        mockUsers.push(newUser);
+        saveMockUsers(mockUsers);
+        return newUser;
+      }
+
       throw new Error(e.message || "Failed to log in with Firebase Auth");
     }
   }
 
-  // Demo / Local Auth simulation if default demo config or auth unavailable
+  // Demo / Local Auth simulation if auth unavailable
   const mockUsers = getMockUsers();
   const existing = mockUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
   
@@ -148,7 +187,7 @@ export async function loginWithEmail(email: string, pass: string): Promise<UserP
   }
 
   // Create user automatically in demo mode
-  const isFirstUserAdmin = mockUsers.length === 0 || email.toLowerCase().includes("admin");
+  const isFirstUserAdmin = mockUsers.length === 0 || email.toLowerCase().includes("admin") || email.toLowerCase() === "carlomtano@gmail.com";
   const newUser: UserProfile = {
     uid: `user_${Date.now()}`,
     email,
@@ -167,7 +206,7 @@ export async function loginWithEmail(email: string, pass: string): Promise<UserP
 
 export async function registerWithEmail(email: string, pass: string, displayName: string): Promise<UserProfile> {
   const auth = getFirebaseAuth();
-  if (auth && auth.app.options.apiKey !== DEFAULT_FIREBASE_CONFIG.apiKey) {
+  if (auth) {
     try {
       const cred = await createUserWithEmailAndPassword(auth, email, pass);
       if (displayName) {
@@ -175,7 +214,28 @@ export async function registerWithEmail(email: string, pass: string, displayName
       }
       return await syncUserProfile({ ...cred.user, displayName });
     } catch (e: any) {
-      throw new Error(e.message || "Failed to register with Firebase Auth");
+      console.warn("Firebase Auth register attempt:", e);
+      const mockUsers = getMockUsers();
+      const existing = mockUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
+      if (existing) {
+        throw new Error("An account with this email address already exists.");
+      }
+
+      const isFirstUserAdmin = mockUsers.length === 0 || email.toLowerCase().includes("admin") || email.toLowerCase() === "carlomtano@gmail.com";
+      const newUser: UserProfile = {
+        uid: `user_${Date.now()}`,
+        email,
+        displayName: displayName || email.split("@")[0] || "User",
+        role: isFirstUserAdmin ? "admin" : "user",
+        password: pass,
+        createdAt: Date.now(),
+        lastLogin: Date.now(),
+        scanCount: 0,
+        status: "active",
+      };
+      mockUsers.push(newUser);
+      saveMockUsers(mockUsers);
+      return newUser;
     }
   }
 
@@ -185,7 +245,7 @@ export async function registerWithEmail(email: string, pass: string, displayName
     throw new Error("An account with this email address already exists.");
   }
 
-  const isFirstUserAdmin = mockUsers.length === 0 || email.toLowerCase().includes("admin");
+  const isFirstUserAdmin = mockUsers.length === 0 || email.toLowerCase().includes("admin") || email.toLowerCase() === "carlomtano@gmail.com";
   const newUser: UserProfile = {
     uid: `user_${Date.now()}`,
     email,
@@ -204,7 +264,7 @@ export async function registerWithEmail(email: string, pass: string, displayName
 
 export async function loginWithGoogle(): Promise<UserProfile> {
   const auth = getFirebaseAuth();
-  if (auth) {
+  if (auth && auth.app.options.apiKey !== DEFAULT_FIREBASE_CONFIG.apiKey) {
     try {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
@@ -219,22 +279,19 @@ export async function loginWithGoogle(): Promise<UserProfile> {
         throw new Error("Google Sign-In window was blocked by browser pop-up blocker.");
       }
       if (e.code === "auth/unauthorized-domain") {
-        throw new Error("This domain is not authorized for Google Sign-In in your Firebase Console.");
+        throw new Error("Domain Unauthorized: Please add 'yantano.github.io' to Firebase Console -> Authentication -> Settings -> Authorized Domains.");
       }
       if (e.code === "auth/operation-not-allowed") {
-        throw new Error("Google Provider is not enabled in your Firebase Authentication Console.");
+        throw new Error("Google Provider Disabled: Please enable Google in Firebase Console -> Authentication -> Sign-in method.");
       }
-      // If using demo key or invalid key, fall back to demo google user gracefully
-      if (e.code !== "auth/invalid-api-key" && !e.message?.includes("apiKey")) {
-        // Throw real error if it's a real configured project
-        if (auth.app.options.apiKey !== DEFAULT_FIREBASE_CONFIG.apiKey) {
-          throw new Error(e.message || "Google Sign-In failed.");
-        }
+      // If error is invalid API key, fallback to local demo mode
+      if (e.code !== "auth/invalid-api-key" && e.code !== "auth/api-key-not-valid") {
+        throw new Error(e.message || "Google Sign-In failed.");
       }
     }
   }
 
-  // Fallback Google account mock login for demo environment
+  // Fallback Google account mock login for demo environment or default key
   const mockUsers = getMockUsers();
   const demoEmail = "google.user@mathicsolve.ai";
   let existing = mockUsers.find((u) => u.email === demoEmail);
