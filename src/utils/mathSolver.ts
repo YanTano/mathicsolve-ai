@@ -2,75 +2,120 @@ import { MathSolution } from "../types";
 import { GoogleGenAI } from "@google/genai";
 
 export async function solveMathClientSide(payload: { image?: string; text?: string; topicHint?: string }): Promise<MathSolution | null> {
-  const apiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || localStorage.getItem("gemini_api_key");
+  const rawKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || localStorage.getItem("gemini_api_key");
+  if (!rawKey) return null;
+
+  const apiKey = rawKey.trim().replace(/^["']|["']$/g, "");
   if (!apiKey) return null;
 
-  try {
-    const ai = new GoogleGenAI({ apiKey });
-    const systemInstruction = `You are MATHLENS AI, a world-class futuristic AI math solver and tutor.
+  const modelsToTry = ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
+  let lastErrorStr = "";
+
+  for (const model of modelsToTry) {
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      const systemInstruction = `You are MATHLENS AI, a world-class futuristic AI math solver and tutor.
 Your task is to analyze the user's input (image of handwritten/printed math equation or typed math text), recognize the mathematical equation or problem accurately, and compute a step-by-step solution.
 
 RULES:
-1. If the image/text is unreadable, extremely blurry, or does not contain any math problem, set "isReadable" to false.
+1. Return ONLY raw valid JSON adhering to the math solution structure.
 2. Format all mathematical equations cleanly using standard readable math notation.
 3. "finalAnswer" must be clear and direct (e.g., "x = 5").
 4. "steps" must be ordered sequentially (01, 02, 03) with clear titles and intermediate mathematical expressions.
-5. "simpleExplanation" should be a concise 1-sentence summary suitable for quick reading.
-6. "detailedExplanation" should be a clear paragraph explaining the math principles, formula rules, and logical flow.
+5. "simpleExplanation" should be a concise 1-sentence summary.
+6. "detailedExplanation" should be a clear paragraph explaining principles and logical flow.
 7. "verification" should show a quick substitution or proof step if applicable.`;
 
-    const promptParts: any[] = [];
-    if (payload.image) {
-      const base64Data = payload.image.replace(/^data:image\/\w+;base64,/, "");
-      const mimeTypeMatch = payload.image.match(/^data:(image\/\w+);base64,/);
-      const mimeType = mimeTypeMatch ? mimeTypeMatch[1] : "image/png";
-      promptParts.push({ inlineData: { mimeType, data: base64Data } });
-    }
+      const promptParts: any[] = [];
+      if (payload.image) {
+        const base64Data = payload.image.replace(/^data:image\/\w+;base64,/, "");
+        const mimeTypeMatch = payload.image.match(/^data:(image\/\w+);base64,/);
+        const mimeType = mimeTypeMatch ? mimeTypeMatch[1] : "image/jpeg";
+        promptParts.push({ inlineData: { mimeType, data: base64Data } });
+      }
 
-    let textPrompt = "Analyze and solve this math problem with step-by-step explanation.";
-    if (payload.text) textPrompt += ` User text problem: "${payload.text}".`;
-    if (payload.topicHint) textPrompt += ` Topic hint: ${payload.topicHint}.`;
-    promptParts.push({ text: textPrompt });
+      let textPrompt = "Analyze and solve this math problem with step-by-step explanation.";
+      if (payload.text) textPrompt += ` User text problem: "${payload.text}".`;
+      if (payload.topicHint) textPrompt += ` Topic hint: ${payload.topicHint}.`;
+      promptParts.push({ text: textPrompt });
 
-    const responsePromise = ai.models.generateContent({
-      model: "gemini-3.6-flash",
-      contents: { parts: promptParts },
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-      },
-    });
+      const responsePromise = ai.models.generateContent({
+        model,
+        contents: { parts: promptParts },
+        config: {
+          systemInstruction,
+          responseMimeType: "application/json",
+        },
+      });
 
-    // 15-second timeout guard to prevent UI from getting stuck on loading
-    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 15000));
-    const response: any = await Promise.race([responsePromise, timeoutPromise]);
+      // 15-second timeout guard
+      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 15000));
+      const response: any = await Promise.race([responsePromise, timeoutPromise]);
 
-    if (response && response.text) {
-      try {
-      const parsed = JSON.parse(response.text);
-      return parsed as MathSolution;
-              } catch (jsonErr) {
-        console.warn("JSON parse error from Gemini response:", jsonErr);
+      if (response && response.text) {
+        const rawText = response.text.trim();
+        let jsonStr = rawText;
+        const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+        if (jsonMatch && jsonMatch[1]) {
+          jsonStr = jsonMatch[1].trim();
+        }
+
+        try {
+          const parsed = JSON.parse(jsonStr);
+          if (parsed && typeof parsed === "object") {
+            return {
+              isReadable: parsed.isReadable !== false,
+              problemDetected: parsed.problemDetected || payload.text || "Recognized Math Problem",
+              topic: parsed.topic || "Mathematics",
+              finalAnswer: parsed.finalAnswer || "Solvable",
+              steps: Array.isArray(parsed.steps) ? parsed.steps : [],
+              simpleExplanation: parsed.simpleExplanation || "Step-by-step math solution computed.",
+              detailedExplanation: parsed.detailedExplanation || "Calculated math problem.",
+              verification: parsed.verification || "",
+            } as MathSolution;
+          }
+        } catch (jsonErr) {
+          console.warn(`JSON parse error from Gemini (${model}):`, jsonErr);
+        }
+      }
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      console.warn(`Client-side Gemini (${model}) solve attempt failed:`, msg);
+      if (msg.includes("API key not valid") || msg.includes("API_KEY_INVALID")) {
+        lastErrorStr = "Invalid Gemini API Key. Please verify your key in Settings.";
+      } else if (msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("Quota")) {
+        lastErrorStr = "Gemini API Quota Exceeded (429). Please wait 30 seconds before scanning again.";
+      } else {
+        lastErrorStr = `Gemini API Error: ${msg}`;
       }
     }
-  } catch (err) {
-    console.warn("Client-side Gemini solve failed:", err);
   }
-  return null;
+
+  // If client-side AI failed, generate fallback solution with diagnosis
+  return generateFallbackSolution(payload.text, lastErrorStr);
 }
 
-export function generateFallbackSolution(problemText?: string): MathSolution {
+export function generateFallbackSolution(problemText?: string, apiErrorMessage?: string): MathSolution {
   const clean = (problemText || "").trim();
   if (!clean) {
+    const rawKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || localStorage.getItem("gemini_api_key");
+    const hasApiKey = Boolean(rawKey && rawKey.trim());
+
     return {
       isReadable: false,
-      problemDetected: "Static Host Limit",
-      topic: "Backend Required",
+      problemDetected: "Gemini API Key Required for Image OCR",
+      topic: "GitHub Pages AI Setup",
       finalAnswer: "N/A",
       steps: [],
-      simpleExplanation: "Image AI processing requires an active backend server or Gemini API Key.",
-      detailedExplanation: "Static web hosts like GitHub Pages do not run Node.js servers for backend image OCR. Please type your math equation manually or configure a Gemini API key.",
-      errorMessage: "Image AI Vision requires a backend server or Gemini API Key on static hosts like GitHub Pages. Please type your equation manually.",
+      simpleExplanation: apiErrorMessage || (hasApiKey
+        ? "The image scan failed. Please verify your Gemini API key in Settings or ensure good lighting."
+        : "Image picture scanning on GitHub Pages requires a Gemini API Key."),
+      detailedExplanation: apiErrorMessage || (hasApiKey
+        ? "Ensure your Gemini API Key is valid and active in Google AI Studio."
+        : "Static web hosts like GitHub Pages do not run Node.js backend servers. Enter your free Gemini API Key in Settings or on this screen to enable instant image scanning."),
+      errorMessage: apiErrorMessage || (hasApiKey
+        ? "Couldn't read the problem clearly. Please ensure good lighting and focus."
+        : "Image picture scanning on GitHub Pages requires a Gemini API Key. Paste your free Gemini API key below or in Settings to scan images."),
     };
   }
 
