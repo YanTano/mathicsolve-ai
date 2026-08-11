@@ -1,16 +1,68 @@
 import { MathSolution } from "../types";
+import { GoogleGenAI } from "@google/genai";
 
-export function generateFallbackSolution(problemText: string): MathSolution {
-  const clean = problemText.trim();
+export async function solveMathClientSide(payload: { image?: string; text?: string; topicHint?: string }): Promise<MathSolution | null> {
+  const apiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || localStorage.getItem("gemini_api_key");
+  if (!apiKey) return null;
+
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    const systemInstruction = `You are MATHLENS AI, a world-class futuristic AI math solver and tutor.
+Your task is to analyze the user's input (image of handwritten/printed math equation or typed math text), recognize the mathematical equation or problem accurately, and compute a step-by-step solution.
+
+RULES:
+1. If the image/text is unreadable, extremely blurry, or does not contain any math problem, set "isReadable" to false.
+2. Format all mathematical equations cleanly using standard readable math notation.
+3. "finalAnswer" must be clear and direct (e.g., "x = 5").
+4. "steps" must be ordered sequentially (01, 02, 03) with clear titles and intermediate mathematical expressions.
+5. "simpleExplanation" should be a concise 1-sentence summary suitable for quick reading.
+6. "detailedExplanation" should be a clear paragraph explaining the math principles, formula rules, and logical flow.
+7. "verification" should show a quick substitution or proof step if applicable.`;
+
+    const promptParts: any[] = [];
+    if (payload.image) {
+      const base64Data = payload.image.replace(/^data:image\/\w+;base64,/, "");
+      const mimeTypeMatch = payload.image.match(/^data:(image\/\w+);base64,/);
+      const mimeType = mimeTypeMatch ? mimeTypeMatch[1] : "image/png";
+      promptParts.push({ inlineData: { mimeType, data: base64Data } });
+    }
+
+    let textPrompt = "Analyze and solve this math problem with step-by-step explanation.";
+    if (payload.text) textPrompt += ` User text problem: "${payload.text}".`;
+    if (payload.topicHint) textPrompt += ` Topic hint: ${payload.topicHint}.`;
+    promptParts.push({ text: textPrompt });
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.6-flash",
+      contents: { parts: promptParts },
+      config: {
+        systemInstruction,
+        responseMimeType: "application/json",
+      },
+    });
+
+    if (response.text) {
+      const parsed = JSON.parse(response.text);
+      return parsed as MathSolution;
+    }
+  } catch (err) {
+    console.warn("Client-side Gemini solve failed:", err);
+  }
+  return null;
+}
+
+export function generateFallbackSolution(problemText?: string): MathSolution {
+  const clean = (problemText || "").trim();
   if (!clean) {
     return {
       isReadable: false,
-      problemDetected: "Unreadable",
-      topic: "Unknown",
+      problemDetected: "Static Host Limit",
+      topic: "Backend Required",
       finalAnswer: "N/A",
       steps: [],
-      simpleExplanation: "No math problem could be identified.",
-      detailedExplanation: "Please ensure the camera is focused on a clear math equation or type it manually.",
+      simpleExplanation: "Image AI processing requires an active backend server or Gemini API Key.",
+      detailedExplanation: "Static web hosts like GitHub Pages do not run Node.js servers for backend image OCR. Please type your math equation manually or configure a Gemini API key.",
+      errorMessage: "Image AI Vision requires a backend server or Gemini API Key on static hosts like GitHub Pages. Please type your equation manually.",
     };
   }
 
