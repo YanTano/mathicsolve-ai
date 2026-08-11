@@ -321,7 +321,7 @@ export async function registerWithEmail(email: string, pass: string, displayName
 
 export async function loginWithGoogle(): Promise<UserProfile> {
   const auth = getFirebaseAuth();
-  if (auth && auth.app.options.apiKey !== DEFAULT_FIREBASE_CONFIG.apiKey) {
+  if (auth) {
     try {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
@@ -341,36 +341,14 @@ export async function loginWithGoogle(): Promise<UserProfile> {
       if (e.code === "auth/operation-not-allowed") {
         throw new Error("Google Provider Disabled: Please enable Google in Firebase Console -> Authentication -> Sign-in method.");
       }
-      // If error is invalid API key, fallback to local demo mode
-      if (e.code !== "auth/invalid-api-key" && e.code !== "auth/api-key-not-valid") {
-        throw new Error(e.message || "Google Sign-In failed.");
+      if (e.code === "auth/invalid-credential" || e.code === "auth/user-disabled") {
+        throw new Error("Invalid credential");
       }
+         throw new Error(formatFirebaseAuthError(e));
     }
   }
 
-  // Fallback Google account mock login for demo environment or default key
-  const mockUsers = getMockUsers();
-  const demoEmail = "google.user@mathicsolve.ai";
-  let existing = mockUsers.find((u) => u.email === demoEmail);
-
-  if (!existing) {
-    existing = {
-      uid: `google_user_${Date.now()}`,
-      email: demoEmail,
-      displayName: "Google User",
-      role: mockUsers.length === 0 ? "admin" : "user",
-      photoURL: "https://lh3.googleusercontent.com/a/default-user",
-      createdAt: Date.now(),
-      lastLogin: Date.now(),
-      scanCount: 0,
-      status: "active",
-    };
-    mockUsers.push(existing);
-  } else {
-    existing.lastLogin = Date.now();
-  }
-  saveMockUsers(mockUsers);
-  return existing;
+  throw new Error("Firebase Auth is not initialized.");
 }
 
 export async function logoutUser(): Promise<void> {
