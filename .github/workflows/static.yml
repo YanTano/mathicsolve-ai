@@ -29,7 +29,10 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      # IMPORTANT: Pass VITE_GEMINI_API_KEY HERE during build
       - name: Build project
+        env:
+          VITE_GEMINI_API_KEY: ${{ secrets.VITE_GEMINI_API_KEY }}
         run: npm run build
 
       - name: Setup Pages
