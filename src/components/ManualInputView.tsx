@@ -13,7 +13,9 @@ import {
   SlidersHorizontal,
   Mic,
   MicOff,
+  Loader2,
 } from "lucide-react";
+import { transcribeAudioWithGemini } from "../utils/mathSolver";
 
 interface ManualInputViewProps {
   onSolveText: (mathText: string, topicHint?: string) => void;
@@ -137,12 +139,16 @@ export const ManualInputView: React.FC<ManualInputViewProps> = ({
   const [isUppercase, setIsUppercase] = useState<boolean>(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Speech Recognition Dictation State
+  // Speech Recognition & Gemini Audio Dictation State
   const [isListening, setIsListening] = useState<boolean>(false);
+  const [isTranscribingAudio, setIsTranscribingAudio] = useState<boolean>(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
   const [liveTranscript, setLiveTranscript] = useState<string>("");
   const recognitionRef = useRef<any>(null);
   const isListeningRef = useRef<boolean>(false);
+  const speechCapturedRef = useRef<boolean>(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   const dictationInitialTextRef = useRef<string>("");
   const problemTextRef = useRef<string>("");
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -331,6 +337,11 @@ export const ManualInputView: React.FC<ManualInputViewProps> = ({
           recognitionRef.current.abort();
         } catch (e) {}
       }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        try {
+          mediaRecorderRef.current.stop();
+        } catch (e) {}
+      }
       if (mediaStreamRef.current) {
         mediaStreamRef.current.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
@@ -341,46 +352,45 @@ export const ManualInputView: React.FC<ManualInputViewProps> = ({
   const toggleSpeechDictation = async () => {
     setSpeechError(null);
 
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      setSpeechError(
-        "Speech recognition is not supported in this browser. Please try Google Chrome or Edge."
-      );
-      return;
-    }
-
     // Stop Dictation
     if (isListening) {
       isListeningRef.current = false;
+      setIsListening(false);
+
       if (recognitionRef.current) {
         try {
           recognitionRef.current.stop();
         } catch (e) {
-          console.warn("Stop speech error:", e);
+          console.warn("Stop speech recognition error:", e);
         }
       }
-      if (mediaStreamRef.current) {
+
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        try {
+          mediaRecorderRef.current.stop();
+        } catch (e) {
+          console.warn("Stop media recorder error:", e);
+        }
+      } else if (mediaStreamRef.current) {
         mediaStreamRef.current.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
       }
-      setIsListening(false);
+
       setLiveTranscript("");
       return;
     }
 
     // Start Dictation
     try {
-      // 1. Explicitly request microphone stream permission from browser
+      let micStream: MediaStream | null = null;
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
         try {
-          const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
           mediaStreamRef.current = micStream;
         } catch (micErr: any) {
           console.warn("Microphone access denied:", micErr);
           setSpeechError(
-            "Microphone permission was denied. Please allow microphone access in your browser bar."
+            "Microphone permission was denied. Please allow microphone access or open app directly in a browser tab."
           );
           setIsListening(false);
           isListeningRef.current = false;
@@ -389,81 +399,145 @@ export const ManualInputView: React.FC<ManualInputViewProps> = ({
       }
 
       isListeningRef.current = true;
+      speechCapturedRef.current = false;
       dictationInitialTextRef.current = problemTextRef.current;
+      audioChunksRef.current = [];
 
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = "en-US";
+      // Setup MediaRecorder for fail-proof audio capture
+      if (micStream && typeof MediaRecorder !== "undefined") {
+        try {
+          const mimeType = MediaRecorder.isTypeSupported("audio/webm")
+            ? "audio/webm"
+            : MediaRecorder.isTypeSupported("audio/mp4")
+            ? "audio/mp4"
+            : "audio/ogg";
 
-      recognition.onstart = () => {
+          const recorder = new MediaRecorder(micStream, { mimeType });
+          recorder.ondataavailable = (e) => {
+            if (e.data.size > 0) {
+              audioChunksRef.current.push(e.data);
+            }
+          };
+
+          recorder.onstop = async () => {
+            if (mediaStreamRef.current) {
+              mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+              mediaStreamRef.current = null;
+            }
+
+            // If SpeechRecognition succeeded in capturing live speech during session, keep that
+            if (speechCapturedRef.current) {
+              return;
+            }
+
+            // Fallback: If SpeechRecognition produced no text or failed (e.g. on GitHub Pages), transcribe audio with Gemini AI
+            if (audioChunksRef.current.length > 0) {
+              setIsTranscribingAudio(true);
+              try {
+                const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+                const reader = new FileReader();
+                reader.readAsDataURL(audioBlob);
+                reader.onloadend = async () => {
+                  const base64Audio = reader.result as string;
+                  if (base64Audio) {
+                    const transcribed = await transcribeAudioWithGemini(base64Audio, mimeType);
+                    if (transcribed) {
+                      const normalized = normalizeSpokenMath(transcribed);
+                      const initial = dictationInitialTextRef.current;
+                      const space = initial && !initial.endsWith(" ") && normalized ? " " : "";
+                      setProblemText(initial + space + normalized);
+                    } else if (!problemTextRef.current) {
+                      setSpeechError("Could not hear spoken math clearly. Please speak closer to the mic.");
+                    }
+                  }
+                  setIsTranscribingAudio(false);
+                };
+              } catch (transcribeErr) {
+                console.warn("Audio fallback error:", transcribeErr);
+                setIsTranscribingAudio(false);
+              }
+            }
+          };
+
+          recorder.start(500);
+          mediaRecorderRef.current = recorder;
+        } catch (recErr) {
+          console.warn("MediaRecorder setup error:", recErr);
+        }
+      }
+
+      // Setup Web Speech API for real-time typing
+      const SpeechRecognition =
+        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+      if (SpeechRecognition) {
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = "en-US";
+
+        recognition.onstart = () => {
+          setIsListening(true);
+          setLiveTranscript("");
+          setSpeechError(null);
+        };
+
+        recognition.onresult = (event: any) => {
+          if (!isListeningRef.current) return;
+
+          let rawFullText = "";
+          for (let i = 0; i < event.results.length; i++) {
+            rawFullText += event.results[i][0].transcript + " ";
+          }
+
+          const normalized = normalizeSpokenMath(rawFullText);
+          if (normalized) {
+            speechCapturedRef.current = true;
+            setLiveTranscript(normalized);
+
+            const initial = dictationInitialTextRef.current;
+            const space = initial && !initial.endsWith(" ") && normalized ? " " : "";
+            setProblemText(initial + space + normalized);
+
+            if (textareaRef.current) {
+              textareaRef.current.scrollTop = textareaRef.current.scrollHeight;
+            }
+          }
+        };
+
+        recognition.onerror = (event: any) => {
+          console.warn("Speech recognition event error:", event.error);
+          if (event.error === "not-allowed" || event.error === "permission-denied") {
+            setSpeechError("Microphone permission was denied.");
+          }
+        };
+
+        recognition.onend = () => {
+          if (isListeningRef.current) {
+            try {
+              recognition.start();
+              return;
+            } catch (e) {}
+          }
+          setIsListening(false);
+          setLiveTranscript("");
+        };
+
+        recognitionRef.current = recognition;
+        try {
+          recognition.start();
+        } catch (e) {
+          console.warn("SpeechRecognition start exception:", e);
+        }
+      } else {
         setIsListening(true);
         setLiveTranscript("");
-        setSpeechError(null);
-      };
-
-      recognition.onresult = (event: any) => {
-        if (!isListeningRef.current) return;
-
-        let rawFullText = "";
-        for (let i = 0; i < event.results.length; i++) {
-          rawFullText += event.results[i][0].transcript + " ";
-        }
-
-        const normalized = normalizeSpokenMath(rawFullText);
-        setLiveTranscript(normalized);
-
-        const initial = dictationInitialTextRef.current;
-        const space = initial && !initial.endsWith(" ") && normalized ? " " : "";
-        const updatedText = initial + space + normalized;
-
-        setProblemText(updatedText);
-
-        if (textareaRef.current) {
-          textareaRef.current.scrollTop = textareaRef.current.scrollHeight;
-        }
-      };
-
-      recognition.onerror = (event: any) => {
-        console.warn("Speech recognition event error:", event.error);
-        if (event.error === "not-allowed" || event.error === "permission-denied") {
-          isListeningRef.current = false;
-          setIsListening(false);
-          setSpeechError(
-            "Microphone permission was denied. Please check your browser settings."
-          );
-        } else if (event.error === "audio-capture") {
-          isListeningRef.current = false;
-          setIsListening(false);
-          setSpeechError("No microphone was detected on this system.");
-        } else if (event.error !== "no-speech") {
-          console.warn("Minor speech error:", event.error);
-        }
-      };
-
-      recognition.onend = () => {
-        // If the user did not click Stop, auto-restart speech recognition seamlessly so listening stays active
-        if (isListeningRef.current) {
-          dictationInitialTextRef.current = problemTextRef.current;
-          try {
-            recognition.start();
-            return;
-          } catch (restartErr) {
-            console.warn("Failed to auto-restart speech recognition:", restartErr);
-          }
-        }
-
-        setIsListening(false);
-        setLiveTranscript("");
-      };
-
-      recognitionRef.current = recognition;
-      recognition.start();
+      }
     } catch (err: any) {
-      console.error("Failed to start speech recognition:", err);
+      console.error("Failed to start dictation:", err);
       setSpeechError("Could not initiate voice dictation.");
-      isListeningRef.current = false;
       setIsListening(false);
+      isListeningRef.current = false;
     }
   };
 
@@ -881,6 +955,17 @@ export const ManualInputView: React.FC<ManualInputViewProps> = ({
               >
                 Done
               </button>
+            </div>
+          )}
+
+          {/* TRANSCRIBING AUDIO BANNER */}
+          {isTranscribingAudio && (
+            <div className="p-3 bg-[#00F0FF]/10 border border-[#00F0FF]/40 shadow-[0_0_15px_rgba(0,240,255,0.2)] rounded-xl flex items-center gap-3 text-xs text-[#00F0FF]">
+              <Loader2 className="w-4 h-4 animate-spin shrink-0 text-[#00F0FF]" />
+              <div className="flex-1 font-mono">
+                <span className="font-bold">AI Transcribing Voice Math...</span>
+                <span className="block text-[10px] text-white/60">Converting spoken audio recording into math symbols</span>
+              </div>
             </div>
           )}
 
