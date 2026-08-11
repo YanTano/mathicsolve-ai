@@ -14,7 +14,7 @@ export async function solveMathClientSide(payload: { image?: string; text?: stri
   for (const model of modelsToTry) {
     try {
       const ai = new GoogleGenAI({ apiKey });
-      const systemInstruction = `You are MATHLENS AI, a world-class futuristic AI math solver and tutor.
+      const systemInstruction = `You are MATHICSOLVE AI, a world-class futuristic AI math solver and tutor.
 Your task is to analyze the user's input (image of handwritten/printed math equation or typed math text), recognize the mathematical equation or problem accurately, and compute a step-by-step solution.
 
 RULES:
