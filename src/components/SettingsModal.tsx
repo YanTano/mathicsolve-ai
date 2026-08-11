@@ -1,5 +1,5 @@
-import React from "react";
-import { X, Settings, Zap, Volume2, Sparkles, Cpu, Sun, Moon, User, Database, Shield } from "lucide-react";
+import React, { useState } from "react";
+import { X, Settings, Zap, Volume2, Sparkles, Cpu, Sun, Moon, User, Database, Shield, Key, Check } from "lucide-react";
 import { UserProfile } from "../types";
 
 interface SettingsModalProps {
@@ -31,6 +31,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onOpenAuth,
   onOpenAdminManager,
 }) => {
+  const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem("gemini_api_key") || "");
+  const [savedSuccess, setSavedSuccess] = useState(false);
+
+  const handleSaveApiKey = () => {
+    if (geminiKey.trim()) {
+      localStorage.setItem("gemini_api_key", geminiKey.trim());
+    } else {
+      localStorage.removeItem("gemini_api_key");
+    }
+    setSavedSuccess(true);
+    setTimeout(() => setSavedSuccess(false), 2500);
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
       <div className="w-full max-w-md glass-card border-slate-700/80 rounded-[24px] overflow-hidden">
@@ -149,6 +162,39 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <span className="text-[10px] font-semibold text-[#00F0FF] bg-[#00F0FF]/15 border border-[#00F0FF]/30 px-2 py-0.5 rounded-full">
               ACTIVE
             </span>
+          </div>
+
+          {/* GEMINI API KEY INPUT FOR GITHUB PAGES / CLIENT SOLVE */}
+          <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-white/5 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Key className="w-4 h-4 text-[#00F0FF]" />
+                <p className="text-xs font-bold text-white">Gemini API Key (GitHub Pages)</p>
+              </div>
+              {savedSuccess && (
+                <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
+                  <Check className="w-3 h-3" /> Saved!
+                </span>
+              )}
+            </div>
+            <p className="text-[10px] text-gray-400 leading-relaxed">
+              Required for scanning pictures on GitHub Pages without a backend server.
+            </p>
+            <div className="flex gap-2 pt-1">
+              <input
+                type="password"
+                placeholder="Paste API key (AQ... or AIza...)"
+                value={geminiKey}
+                onChange={(e) => setGeminiKey(e.target.value)}
+                className="flex-1 bg-slate-950 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#00F0FF]"
+              />
+              <button
+                onClick={handleSaveApiKey}
+                className="px-3.5 py-1.5 bg-[#00F0FF] text-slate-950 font-bold text-xs rounded-xl hover:bg-[#00F0FF]/90 transition active:scale-95"
+              >
+                Save
+              </button>
+            </div>
           </div>
 
           {/* EXPLANATION DEPTH PREFERENCE */}
