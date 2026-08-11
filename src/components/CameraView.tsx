@@ -500,7 +500,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
                     {scanStep === "reading" ? "Reading problem..." : "Solving..."}
                   </h3>
                   <p className="text-[10px] text-white/40 mt-1 uppercase tracking-widest">
-                    MATHLENS AI Engine
+                    MATHICSOLVE AI Engine
                   </p>
                 </div>
               </div>
