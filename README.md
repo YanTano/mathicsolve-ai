@@ -3,7 +3,7 @@
 > **Scan. Solve. Understand.**
 
 An AI-powered mathematics assistant that allows users to scan mathematical problems using their camera or upload an image, recognize the problem, and receive AI-generated solutions with step-by-step explanations.
-
+![React](https://img.shields.io/badge/React-blue) ![TypeScript](https://img.shields.io/badge/TypeScript-blue) ![Vite](https://img.shields.io/badge/Vite-purple) ![Gemini%20AI](https://img.shields.io/badge/Gemini%20AI-orange) ![HTML5](https://img.shields.io/badge/HTML5-orange) ![CSS3](https://img.shields.io/badge/CSS3-blue)
 ---
 
 ## 🌐 Live Demo
