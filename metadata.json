@@ -1,0 +1,11 @@
+{
+  "name": "MATHICSOLVE AI",
+  "description": "Scan it. Solve it. Understand it. Premium futuristic AI math camera scanner and step-by-step solver.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
