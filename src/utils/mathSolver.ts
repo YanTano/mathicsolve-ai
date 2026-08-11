@@ -8,13 +8,14 @@ export async function solveMathClientSide(payload: { image?: string; text?: stri
   const apiKey = rawKey.trim().replace(/^["']|["']$/g, "");
   if (!apiKey) return null;
 
-  const modelsToTry = ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
+  const modelsToTry = ["gemini-2.5-flash", "gemini-3.6-flash", "gemini-3.1-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash"];
   let lastErrorStr = "";
 
   for (const model of modelsToTry) {
-    try {
-      const ai = new GoogleGenAI({ apiKey });
-      const systemInstruction = `You are MATHICSOLVE AI, a world-class futuristic AI math solver and tutor.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const ai = new GoogleGenAI({ apiKey });
+        const systemInstruction = `You are MATHICSOLVE AI, a world-class futuristic AI math solver and tutor.
 Your task is to analyze the user's input (image of handwritten/printed math equation or typed math text), recognize the mathematical equation or problem accurately, and compute a step-by-step solution.
 
 RULES:
@@ -26,67 +27,77 @@ RULES:
 6. "detailedExplanation" should be a clear paragraph explaining principles and logical flow.
 7. "verification" should show a quick substitution or proof step if applicable.`;
 
-      const promptParts: any[] = [];
-      if (payload.image) {
-        const base64Data = payload.image.replace(/^data:image\/\w+;base64,/, "");
-        const mimeTypeMatch = payload.image.match(/^data:(image\/\w+);base64,/);
-        const mimeType = mimeTypeMatch ? mimeTypeMatch[1] : "image/jpeg";
-        promptParts.push({ inlineData: { mimeType, data: base64Data } });
-      }
-
-      let textPrompt = "Analyze and solve this math problem with step-by-step explanation.";
-      if (payload.text) textPrompt += ` User text problem: "${payload.text}".`;
-      if (payload.topicHint) textPrompt += ` Topic hint: ${payload.topicHint}.`;
-      promptParts.push({ text: textPrompt });
-
-      const responsePromise = ai.models.generateContent({
-        model,
-        contents: { parts: promptParts },
-        config: {
-          systemInstruction,
-          responseMimeType: "application/json",
-        },
-      });
-
-      // 15-second timeout guard
-      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 15000));
-      const response: any = await Promise.race([responsePromise, timeoutPromise]);
-
-      if (response && response.text) {
-        const rawText = response.text.trim();
-        let jsonStr = rawText;
-        const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-        if (jsonMatch && jsonMatch[1]) {
-          jsonStr = jsonMatch[1].trim();
+        const promptParts: any[] = [];
+        if (payload.image) {
+          const base64Data = payload.image.replace(/^data:image\/\w+;base64,/, "");
+          const mimeTypeMatch = payload.image.match(/^data:(image\/\w+);base64,/);
+          const mimeType = mimeTypeMatch ? mimeTypeMatch[1] : "image/jpeg";
+          promptParts.push({ inlineData: { mimeType, data: base64Data } });
         }
 
-        try {
-          const parsed = JSON.parse(jsonStr);
-          if (parsed && typeof parsed === "object") {
-            return {
-              isReadable: parsed.isReadable !== false,
-              problemDetected: parsed.problemDetected || payload.text || "Recognized Math Problem",
-              topic: parsed.topic || "Mathematics",
-              finalAnswer: parsed.finalAnswer || "Solvable",
-              steps: Array.isArray(parsed.steps) ? parsed.steps : [],
-              simpleExplanation: parsed.simpleExplanation || "Step-by-step math solution computed.",
-              detailedExplanation: parsed.detailedExplanation || "Calculated math problem.",
-              verification: parsed.verification || "",
-            } as MathSolution;
+        let textPrompt = "Analyze and solve this math problem with step-by-step explanation.";
+        if (payload.text) textPrompt += ` User text problem: "${payload.text}".`;
+        if (payload.topicHint) textPrompt += ` Topic hint: ${payload.topicHint}.`;
+        promptParts.push({ text: textPrompt });
+
+        const responsePromise = ai.models.generateContent({
+          model,
+          contents: { parts: promptParts },
+          config: {
+            systemInstruction,
+            responseMimeType: "application/json",
+          },
+        });
+
+        // 15-second timeout guard
+        const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 15000));
+        const response: any = await Promise.race([responsePromise, timeoutPromise]);
+
+        if (response && response.text) {
+          const rawText = response.text.trim();
+          let jsonStr = rawText;
+          const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+          if (jsonMatch && jsonMatch[1]) {
+            jsonStr = jsonMatch[1].trim();
           }
-        } catch (jsonErr) {
-          console.warn(`JSON parse error from Gemini (${model}):`, jsonErr);
+
+          try {
+            const parsed = JSON.parse(jsonStr);
+            if (parsed && typeof parsed === "object") {
+              return {
+                isReadable: parsed.isReadable !== false,
+                problemDetected: parsed.problemDetected || payload.text || "Recognized Math Problem",
+                topic: parsed.topic || "Mathematics",
+                finalAnswer: parsed.finalAnswer || "Solvable",
+                steps: Array.isArray(parsed.steps) ? parsed.steps : [],
+                simpleExplanation: parsed.simpleExplanation || "Step-by-step math solution computed.",
+                detailedExplanation: parsed.detailedExplanation || "Calculated math problem.",
+                verification: parsed.verification || "",
+              } as MathSolution;
+            }
+          } catch (jsonErr) {
+            console.warn(`JSON parse error from Gemini (${model}):`, jsonErr);
+          }
         }
-      }
-    } catch (err: any) {
-      const msg = err?.message || String(err);
-      console.warn(`Client-side Gemini (${model}) solve attempt failed:`, msg);
-      if (msg.includes("API key not valid") || msg.includes("API_KEY_INVALID")) {
-        lastErrorStr = "Invalid Gemini API Key. Please verify your key in Settings.";
-      } else if (msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("Quota")) {
-        lastErrorStr = "Gemini API Quota Exceeded (429). Please wait 30 seconds before scanning again.";
-      } else {
-        lastErrorStr = `Gemini API Error: ${msg}`;
+      } catch (err: any) {
+        const msg = err?.message || String(err);
+        console.warn(`Client-side Gemini (${model}) attempt ${attempt + 1} failed:`, msg);
+
+        if (msg.includes("API key not valid") || msg.includes("API_KEY_INVALID")) {
+          lastErrorStr = "Invalid Gemini API Key. Please verify your key in Settings.";
+          break; // Invalid key won't succeed on retry
+        } else if (msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("Quota")) {
+          const retryMatch = msg.match(/retry in ([0-9.]+)s/i);
+          const retrySeconds = retryMatch ? parseFloat(retryMatch[1]) : 2.5;
+          if (retrySeconds <= 5 && attempt === 0) {
+            console.log(`Client-side 429 on ${model}. Waiting ${retrySeconds}s before retrying...`);
+            await new Promise((r) => setTimeout(r, Math.ceil(retrySeconds * 1000) + 500));
+            continue;
+          }
+          lastErrorStr = `Gemini API Quota Exceeded (429). Please wait ${Math.ceil(retrySeconds)}s before scanning again.`;
+        } else {
+          lastErrorStr = `Gemini API Error: ${msg}`;
+        }
       }
     }
   }
@@ -270,4 +281,85 @@ export function generateFallbackSolution(problemText?: string, apiErrorMessage?:
     detailedExplanation: "Systematic algebraic transformations break down math terms for precision.",
     verification: "Algebraic balance confirmed.",
   };
+}
+
+export async function transcribeAudioWithGemini(
+  base64Audio: string,
+  mimeType: string = "audio/webm"
+): Promise<string | null> {
+  const rawKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || localStorage.getItem("gemini_api_key");
+  const apiKey = rawKey ? rawKey.trim().replace(/^["']|["']$/g, "") : "";
+
+  const cleanBase64 = base64Audio.replace(/^data:audio\/\w+;base64,/, "");
+
+  if (apiKey) {
+    const modelsToTry = [
+      "gemini-2.5-flash",
+      "gemini-3.6-flash",
+      "gemini-3.1-flash-lite",
+      "gemini-2.0-flash",
+      "gemini-1.5-flash",
+    ];
+
+    for (const model of modelsToTry) {
+      try {
+        const ai = new GoogleGenAI({ apiKey });
+        const systemInstruction = `You are a specialized mathematical speech-to-text transcriber for MATHICSOLVE AI.
+Your ONLY task is to listen to the audio recording of spoken math problems and transcribe the math equation accurately.
+RULES:
+1. Convert spoken math into concise math symbols:
+   - "plus" -> "+"
+   - "minus" -> "-"
+   - "times" or "multiplied by" -> "*"
+   - "divided by" or "over" -> "/"
+   - "equals" or "equal to" -> "="
+   - "squared" -> "²"
+   - "cubed" -> "³"
+   - "square root of" -> "√("
+   - "to the power of" -> "^"
+2. Output ONLY the raw math expression or equation (e.g. "2x + 5 = 15", "x² - 5x + 6 = 0", "35 * 4").
+3. Do NOT include explanations, conversational filler, markdown formatting, or quotes.`;
+
+        const responsePromise = ai.models.generateContent({
+          model,
+          contents: {
+            parts: [
+              { inlineData: { mimeType, data: cleanBase64 } },
+              { text: "Transcribe the spoken math problem in this audio into clean math notation." },
+            ],
+          },
+          config: { systemInstruction },
+        });
+
+        const timeoutPromise = new Promise<null>((resolve) =>
+          setTimeout(() => resolve(null), 12000)
+        );
+        const response: any = await Promise.race([responsePromise, timeoutPromise]);
+
+        if (response && response.text) {
+          const transcribed = response.text.trim();
+          if (transcribed) return transcribed;
+        }
+      } catch (err) {
+        console.warn(`Gemini audio transcription error (${model}):`, err);
+      }
+    }
+  }
+
+  // Fallback to server API if available
+  try {
+    const res = await fetch("/api/transcribe-audio", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ audio: cleanBase64, mimeType }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.text) return data.text;
+    }
+  } catch (serverErr) {
+    console.warn("Server audio transcription route error:", serverErr);
+  }
+
+  return null;
 }
