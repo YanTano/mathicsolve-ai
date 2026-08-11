@@ -92,7 +92,7 @@ RULES:
       promptParts.push({ text: textPrompt });
 
       const response = await client.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.6-flash",
         contents: { parts: promptParts },
         config: {
           systemInstruction,
