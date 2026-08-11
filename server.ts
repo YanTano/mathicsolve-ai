@@ -91,64 +91,161 @@ RULES:
       }
       promptParts.push({ text: textPrompt });
 
-      const response = await client.models.generateContent({
-        model: "gemini-3.6-flash",
-        contents: { parts: promptParts },
-        config: {
-          systemInstruction,
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              isReadable: { type: Type.BOOLEAN },
-              problemDetected: { type: Type.STRING },
-              topic: { type: Type.STRING },
-              finalAnswer: { type: Type.STRING },
-              steps: {
-                type: Type.ARRAY,
-                items: {
+      const models = ["gemini-2.5-flash", "gemini-3.6-flash", "gemini-3.1-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash"];
+      let lastError: any = null;
+      let parsedData: any = null;
+
+      for (const model of models) {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            const response = await client.models.generateContent({
+              model,
+              contents: { parts: promptParts },
+              config: {
+                systemInstruction,
+                responseMimeType: "application/json",
+                responseSchema: {
                   type: Type.OBJECT,
                   properties: {
-                    stepNumber: { type: Type.STRING },
-                    title: { type: Type.STRING },
-                    expression: { type: Type.STRING },
-                    explanation: { type: Type.STRING },
+                    isReadable: { type: Type.BOOLEAN },
+                    problemDetected: { type: Type.STRING },
+                    topic: { type: Type.STRING },
+                    finalAnswer: { type: Type.STRING },
+                    steps: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          stepNumber: { type: Type.STRING },
+                          title: { type: Type.STRING },
+                          expression: { type: Type.STRING },
+                          explanation: { type: Type.STRING },
+                        },
+                        required: ["stepNumber", "title", "expression"],
+                      },
+                    },
+                    simpleExplanation: { type: Type.STRING },
+                    detailedExplanation: { type: Type.STRING },
+                    verification: { type: Type.STRING },
                   },
-                  required: ["stepNumber", "title", "expression"],
+                  required: [
+                    "isReadable",
+                    "problemDetected",
+                    "topic",
+                    "finalAnswer",
+                    "steps",
+                    "simpleExplanation",
+                    "detailedExplanation",
+                  ],
                 },
               },
-              simpleExplanation: { type: Type.STRING },
-              detailedExplanation: { type: Type.STRING },
-              verification: { type: Type.STRING },
-            },
-            required: [
-              "isReadable",
-              "problemDetected",
-              "topic",
-              "finalAnswer",
-              "steps",
-              "simpleExplanation",
-              "detailedExplanation",
-            ],
-          },
-        },
-      });
+            });
 
-      const responseText = response.text;
-      if (!responseText) {
-        throw new Error("Empty response from AI model.");
+            if (response.text) {
+              parsedData = JSON.parse(response.text);
+              break; // Successfully solved
+            }
+          } catch (err: any) {
+            lastError = err;
+            const errStr = String(err?.message || JSON.stringify(err || {}));
+            console.warn(`Gemini model '${model}' (attempt ${attempt + 1}) failed:`, errStr);
+
+            // If 429 rate limit with a short retry delay (<=5s), wait and retry once
+            if ((errStr.includes("429") || errStr.includes("RESOURCE_EXHAUSTED")) && attempt === 0) {
+              const retryMatch = errStr.match(/retry in ([0-9.]+)s/i);
+              const retrySeconds = retryMatch ? parseFloat(retryMatch[1]) : 2.5;
+              if (retrySeconds <= 5) {
+                console.log(`Rate limited on ${model}. Waiting ${retrySeconds}s before retry...`);
+                await new Promise((r) => setTimeout(r, Math.ceil(retrySeconds * 1000) + 500));
+                continue;
+              }
+            }
+            break; // Move immediately to next model in the list
+          }
+        }
+        if (parsedData) break;
       }
 
-      const parsedData = JSON.parse(responseText);
-      return res.json(parsedData);
-    } catch (err: any) {
-      console.error("Error solving math problem:", err);
-      // Fallback response if API fails
-      const fallback = generateFallbackSolution(req.body.text || "2x + 5 = 15");
+      if (parsedData) {
+        return res.json(parsedData);
+      }
+
+      console.error("All Gemini models failed:", lastError);
+
+      let userFriendlyMessage = "Failed to process image with Gemini API.";
+      const errStr = String(lastError?.message || JSON.stringify(lastError || {}));
+      if (errStr.includes("429") || errStr.includes("RESOURCE_EXHAUSTED") || errStr.includes("Quota exceeded")) {
+        const retryMatch = errStr.match(/retry in ([0-9.]+s)/i);
+        const retryText = retryMatch ? ` Please retry in ${retryMatch[1]}.` : " Please wait 30 seconds before trying again.";
+        userFriendlyMessage = `Gemini API Rate Limit / Quota Exceeded.${retryText} You can also add your own Gemini API key in Settings.`;
+      }
+
+      // If user provided text problem, attempt rule-based local solver
+      if (text) {
+        const localSolution = generateFallbackSolution(text);
+        if (localSolution.isReadable) {
+          return res.json(localSolution);
+        }
+      }
+
+      const fallback = generateFallbackSolution(text || "");
       return res.json({
         ...fallback,
-        errorMessage: err.message || "Failed to process image with Gemini API.",
+        errorMessage: userFriendlyMessage,
       });
+    } catch (outerErr: any) {
+      console.error("Outer error in /api/solve-math:", outerErr);
+      const fallback = generateFallbackSolution(req.body?.text || "");
+      return res.json({
+        ...fallback,
+        errorMessage: outerErr?.message || "An unexpected error occurred while processing your request.",
+      });
+    }
+  });
+
+  // API Route: Transcribe Audio
+  app.post("/api/transcribe-audio", async (req, res) => {
+    try {
+      const { audio, mimeType = "audio/webm" } = req.body;
+      if (!audio) {
+        return res.status(400).json({ error: "No audio provided" });
+      }
+
+      const client = getGenAIClient();
+      if (!client) {
+        return res.status(500).json({ error: "Gemini API client not initialized" });
+      }
+
+      const cleanBase64 = audio.replace(/^data:audio\/\w+;base64,/, "");
+      const models = ["gemini-2.5-flash", "gemini-3.6-flash", "gemini-3.1-flash-lite", "gemini-2.0-flash"];
+
+      for (const model of models) {
+        try {
+          const response = await client.models.generateContent({
+            model,
+            contents: {
+              parts: [
+                { inlineData: { mimeType, data: cleanBase64 } },
+                { text: "Transcribe the spoken math problem in this audio into clean math notation." },
+              ],
+            },
+            config: {
+              systemInstruction: `You are a specialized mathematical speech-to-text transcriber for MATHICSOLVE AI. Convert spoken math into concise math symbols (e.g., 2x + 5 = 15). Output ONLY the math expression without quotes or conversational text.`,
+            },
+          });
+
+          if (response.text) {
+            return res.json({ text: response.text.trim() });
+          }
+        } catch (err: any) {
+          console.warn(`Server audio transcribe error (${model}):`, err?.message || err);
+        }
+      }
+
+      return res.status(500).json({ error: "Could not transcribe audio" });
+    } catch (err: any) {
+      console.error("Error in /api/transcribe-audio:", err);
+      return res.status(500).json({ error: err?.message || "Internal server error" });
     }
   });
 
