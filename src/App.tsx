@@ -8,7 +8,7 @@ import { SettingsModal } from "./components/SettingsModal";
 import { AuthModal } from "./components/AuthModal";
 import { AdminManagerModal } from "./components/AdminManagerModal";
 import { MathSolution, ScanHistoryItem, UserProfile } from "./types";
-import { generateFallbackSolution } from "./utils/mathSolver";
+import { generateFallbackSolution, solveMathClientSide } from "./utils/mathSolver";
 import { syncScanToCloud } from "./lib/firebase";
 
 export default function App() {
@@ -176,11 +176,13 @@ export default function App() {
           solution = await res.json();
         } else {
           // Static host fallback (e.g. GitHub Pages)
-          solution = generateFallbackSolution(payload.text || "2x + 5 = 15");
+          const clientSol = await solveMathClientSide(payload);
+          solution = clientSol || generateFallbackSolution(payload.text);
         }
       } catch {
         // Network or offline fallback (e.g. GitHub Pages)
-        solution = generateFallbackSolution(payload.text || "2x + 5 = 15");
+        const clientSol = await solveMathClientSide(payload);
+        solution = clientSol || generateFallbackSolution(payload.text);
       }
 
       clearTimeout(timer1);
