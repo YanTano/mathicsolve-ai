@@ -122,6 +122,57 @@ export async function testFirebaseConnection(config: FirebaseConfig): Promise<{ 
   }
 }
 
+
+// Error Formatting Helper for User Friendly Messages
+export function formatFirebaseAuthError(e: any): string {
+  if (!e) return "An unexpected error occurred.";
+  const code = e.code || "";
+  const message = typeof e === "string" ? e : (e.message || "");
+
+  if (code === "auth/invalid-credential" || message.includes("auth/invalid-credential")) {
+    return "Invalid credential";
+  }
+  if (code === "auth/user-not-found" || message.includes("auth/user-not-found")) {
+    return "Invalid credential";
+  }
+  if (code === "auth/wrong-password" || message.includes("auth/wrong-password")) {
+    return "Invalid credential";
+  }
+  if (code === "auth/invalid-email" || message.includes("auth/invalid-email")) {
+    return "Invalid email address format.";
+  }
+  if (code === "auth/email-already-in-use" || message.includes("auth/email-already-in-use")) {
+    return "An account with this email address already exists.";
+  }
+  if (code === "auth/weak-password" || message.includes("auth/weak-password")) {
+    return "Password must be at least 6 characters long.";
+  }
+  if (code === "auth/user-disabled" || message.includes("auth/user-disabled")) {
+    return "This user account has been disabled.";
+  }
+  if (code === "auth/unauthorized-domain" || message.includes("auth/unauthorized-domain")) {
+    return "Domain Unauthorized: Please add 'yantano.github.io' to Firebase Console -> Authentication -> Settings -> Authorized Domains.";
+  }
+  if (code === "auth/operation-not-allowed" || message.includes("auth/operation-not-allowed")) {
+    return "Provider Disabled: Please enable Email/Password or Google in Firebase Console -> Authentication -> Sign-in method.";
+  }
+  if (code === "auth/popup-closed-by-user" || message.includes("auth/popup-closed-by-user")) {
+    return "Google Sign-In window was closed before completing.";
+  }
+  if (code === "auth/popup-blocked" || message.includes("auth/popup-blocked")) {
+    return "Google Sign-In window was blocked by browser pop-up blocker.";
+  }
+
+  // Cleanup standard Firebase raw error wrapper "Firebase: Error (...)."
+  if (message.startsWith("Firebase:")) {
+    const cleaned = message.replace(/^Firebase:\s*Error\s*\(|\)\.?$/g, "").trim();
+    if (cleaned === "auth/invalid-credential") return "Invalid credential";
+    return cleaned;
+  }
+
+  return message || "Authentication failed.";
+}
+
 // Auth Helper Functions
 export async function loginWithEmail(email: string, pass: string): Promise<UserProfile> {
   const auth = getFirebaseAuth();
@@ -137,6 +188,9 @@ export async function loginWithEmail(email: string, pass: string): Promise<UserP
       if (e.code === "auth/operation-not-allowed") {
         throw new Error("Provider Disabled: Please enable Email/Password in Firebase Console -> Authentication -> Sign-in method.");
       }
+      if (e.code === "auth/invalid-credential" || e.code === "auth/user-not-found" || e.code === "auth/wrong-password") {
+        throw new Error("Invalid credential");
+      }
 
       // Check local mock users if user exists locally
       const mockUsers = getMockUsers();
@@ -145,6 +199,9 @@ export async function loginWithEmail(email: string, pass: string): Promise<UserP
       if (existing) {
         if (existing.status === "suspended") {
           throw new Error("This user account has been suspended by the administrator.");
+        }
+        if (existing.password && existing.password !== pass) {
+          throw new Error("Invalid credential");
         }
         existing.lastLogin = Date.now();
         saveMockUsers(mockUsers);
@@ -169,7 +226,7 @@ export async function loginWithEmail(email: string, pass: string): Promise<UserP
         return newUser;
       }
 
-      throw new Error(e.message || "Failed to log in with Firebase Auth");
+      throw new Error(formatFirebaseAuthError(e));
     }
   }
 
