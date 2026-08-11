@@ -54,7 +54,7 @@ async function startServer() {
         return res.json(fallbackSolution);
       }
 
-      const systemInstruction = `You are MATHLENS AI, a world-class futuristic AI math solver and tutor.
+      const systemInstruction = `You are MATHICSOLVE AI, a world-class futuristic AI math solver and tutor.
 Your task is to analyze the user's input (image of handwritten/printed math equation or typed math text), recognize the mathematical equation or problem accurately, and compute a step-by-step solution.
 
 RULES:
@@ -168,7 +168,7 @@ RULES:
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`MATHLENS AI Server running on http://0.0.0.0:${PORT}`);
+    console.log(`MATHICSOLVE AI Server running on http://0.0.0.0:${PORT}`);
   });
 }
 
