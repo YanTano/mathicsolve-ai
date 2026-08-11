@@ -32,8 +32,8 @@ RULES:
     if (payload.topicHint) textPrompt += ` Topic hint: ${payload.topicHint}.`;
     promptParts.push({ text: textPrompt });
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+    const responsePromise = ai.models.generateContent({
+      model: "gemini-2.5-flash",
       contents: { parts: promptParts },
       config: {
         systemInstruction,
@@ -41,9 +41,17 @@ RULES:
       },
     });
 
-    if (response.text) {
+    // 15-second timeout guard to prevent UI from getting stuck on loading
+    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 15000));
+    const response: any = await Promise.race([responsePromise, timeoutPromise]);
+
+    if (response && response.text) {
+      try {
       const parsed = JSON.parse(response.text);
       return parsed as MathSolution;
+              } catch (jsonErr) {
+        console.warn("JSON parse error from Gemini response:", jsonErr);
+      }
     }
   } catch (err) {
     console.warn("Client-side Gemini solve failed:", err);
