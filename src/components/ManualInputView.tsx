@@ -1205,7 +1205,7 @@ export const ManualInputView: React.FC<ManualInputViewProps> = ({
       </main>
 
       <footer className="py-2 text-center text-xs text-gray-500 font-mono">
-        MATHLENS AI • Real-time Mathematical Engine
+        MATHICSOLVE AI • Real-time Mathematical Engine
       </footer>
     </div>
   );
