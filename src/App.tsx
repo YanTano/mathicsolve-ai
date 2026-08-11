@@ -54,23 +54,27 @@ export default function App() {
     }
   }, [currentUser]);
 
-  // Support direct URL routing to #/admin or ?admin=true
+  // Hash routing for dedicated Admin Page
+  const [isAdminRoute, setIsAdminRoute] = useState<boolean>(() => {
+    const hash = window.location.hash;
+    const search = window.location.search;
+    return hash === "#/admin" || hash === "#admin" || search.includes("admin=true");
+  });
+  
   useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash;
       const search = window.location.search;
-      if (hash === "#/admin" || hash === "#admin" || search.includes("admin=true") || search.includes("admin")) {
-        if (currentUser?.role === "admin") {
-          setShowAdminManagerModal(true);
-        } else {
-          setShowAuthModal(true);
-        }
-      }
+            setIsAdminRoute(hash === "#/admin" || hash === "#admin" || search.includes("admin=true"));
     };
     handleHashChange();
     window.addEventListener("hashchange", handleHashChange);
-    return () => window.removeEventListener("hashchange", handleHashChange);
-  }, [currentUser]);
+    window.addEventListener("popstate", handleHashChange);
+    return () => {
+      window.removeEventListener("hashchange", handleHashChange);
+      window.removeEventListener("popstate", handleHashChange);
+    };
+  }, []);
 
   // Settings state
   const [flashMode, setFlashMode] = useState<boolean>(false);
@@ -266,13 +270,41 @@ export default function App() {
   };
 
   const handleOpenAdminManager = () => {
-    if (currentUser?.role !== "admin") {
-      alert("Access Denied: Admin Manager is restricted strictly to Administrator accounts.");
-      return;
-    }
+    window.location.hash = "#/admin";
     setShowAdminManagerModal(true);
   };
 
+  
+  // If on direct #/admin route, render dedicated Admin Page experience
+  if (isAdminRoute) {
+    return (
+      <div className="w-full min-h-screen bg-[#05070B] text-white selection:bg-[#00F0FF]/30 selection:text-[#00F0FF]">
+        {currentUser?.role === "admin" ? (
+          <AdminManagerModal
+            isOpen={true}
+            onClose={() => {
+              window.location.hash = "#/";
+              setShowAdminManagerModal(false);
+            }}
+            currentUser={currentUser}
+          />
+        ) : (
+          <AuthModal
+            isOpen={true}
+            onClose={() => {
+              window.location.hash = "#/";
+            }}
+            currentUser={currentUser}
+            onUserChanged={setCurrentUser}
+            onOpenAdminManager={() => {
+              window.location.hash = "#/admin";
+            }}
+          />
+        )}
+      </div>
+    );
+  }
+  
   return (
     <div className="w-full min-h-screen bg-[#05070B] text-white selection:bg-[#00F0FF]/30 selection:text-[#00F0FF]">
       {/* HOME CAMERA VIEW */}
